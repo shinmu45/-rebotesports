@@ -1,104 +1,151 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { 
   Users, Calendar, Download, Search, CheckCircle, XCircle, 
-  Clock, Shield, DollarSign, Settings, Plus, RefreshCw, ArrowLeft, Eye 
+  Clock, Shield, DollarSign, Settings, Plus, RefreshCw, ArrowLeft, Eye, LogOut 
 } from 'lucide-react';
 import { Registration, EventItem, SiteSettings } from '@/types';
 import { exportRegistrationsToExcel } from '@/lib/excelExport';
-
-// Participantes de ejemplo para visualización inmediata
-const mockRegistrations: Registration[] = [
-  {
-    id: 'reg-1',
-    event_name: 'Pase Trilogía Solidaria (3 Días)',
-    code: 'RB-829144',
-    full_name: 'Carlos Eduardo Mendoza',
-    id_doc: 'V-19845123',
-    email: 'carlos.mendoza@gmail.com',
-    phone: '0414-1234567',
-    age: 29,
-    gender: 'Masculino',
-    shirt_size: 'L',
-    modality: 'Carrera 8K',
-    payment_method: 'pagomovil',
-    payment_reference: '084920',
-    payment_amount_usd: 20,
-    payment_amount_bs: 900,
-    status: 'aprobado',
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'reg-2',
-    event_name: 'Running VZLA 8K — Solidarios con La Guaira',
-    code: 'RB-492102',
-    full_name: 'Mariangel Gómez',
-    id_doc: 'V-24510982',
-    email: 'mariangel.g@hotmail.com',
-    phone: '0412-9876543',
-    age: 24,
-    gender: 'Femenino',
-    shirt_size: 'S',
-    modality: 'Caminata 8K',
-    payment_method: 'zelle',
-    payment_reference: 'ZLL-98214',
-    payment_amount_usd: 15,
-    status: 'pendiente',
-    created_at: new Date(Date.now() - 3600000).toISOString()
-  },
-  {
-    id: 'reg-3',
-    event_name: 'Cuadrangular de Baloncesto Libre',
-    code: 'RB-110294',
-    full_name: 'José Gregorio Salazar',
-    id_doc: 'V-16200114',
-    email: 'jsalazar@araguaball.com',
-    phone: '0424-3456789',
-    age: 32,
-    gender: 'Masculino',
-    modality: 'Espectador General',
-    payment_method: 'efectivo',
-    payment_amount_usd: 10,
-    status: 'pendiente',
-    created_at: new Date(Date.now() - 7200000).toISOString()
-  }
-];
+import { supabase } from '@/lib/supabase';
 
 export default function AdminDashboardPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<'registrations' | 'events' | 'settings'>('registrations');
-  const [registrations, setRegistrations] = useState<Registration[]>(mockRegistrations);
+  const [registrations, setRegistrations] = useState<Registration[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('todos');
   const [selectedReg, setSelectedReg] = useState<Registration | null>(null);
 
   // Estados de configuración editables
   const [bcvRate, setBcvRate] = useState(45.00);
-  const [youtubeLive, setYoutubeLive] = useState('https://www.youtube.com/embed/live_stream?channel=UCexample');
+  const [youtubeLive, setYoutubeLive] = useState('https://www.youtube.com/embed/0zMK_498_OM');
   const [adminEmail, setAdminEmail] = useState('notificaciones@rebotesports.com');
+  const [savingSettings, setSavingSettings] = useState(false);
 
-  // Filtrado de participantes
-  const filtered = registrations.filter(r => {
-    const matchesSearch = 
-      r.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.id_doc.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'todos' || r.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  // 1. Verificación de Autenticación con Supabase Auth
+  useEffect(() => {
+    async function checkUser() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push('/admin/login');
+      } else {
+        setUserEmail(session.user.email || null);
+        setAuthChecking(false);
+        fetchData();
+      }
+    }
+    checkUser();
+  }, [router]);
 
-  const handleUpdateStatus = (id: string, newStatus: 'aprobado' | 'rechazado' | 'pendiente') => {
+  // 2. Cargar datos reales desde Supabase
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // Cargar registros de participantes
+      const { data: regs, error: regsError } = await supabase
+        .from('registrations')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (regs && !regsError) {
+        setRegistrations(regs);
+      }
+
+      // Cargar configuración actual
+      const { data: settings, error: settError } = await supabase
+        .from('site_settings')
+        .select('*')
+        .eq('id', 'general')
+        .single();
+
+      if (settings && !settError) {
+        setBcvRate(Number(settings.bcv_rate) || 45.00);
+        setYoutubeLive(settings.youtube_live_url || '');
+        setAdminEmail(settings.admin_notification_email || '');
+      }
+    } catch (err) {
+      console.error('Error fetching admin data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/admin/login');
+  };
+
+  const handleUpdateStatus = async (id: string, newStatus: 'aprobado' | 'rechazado' | 'pendiente') => {
+    // Optimistic UI update
     setRegistrations(prev => prev.map(r => r.id === id ? { ...r, status: newStatus } : r));
     if (selectedReg && selectedReg.id === id) {
       setSelectedReg({ ...selectedReg, status: newStatus });
+    }
+
+    try {
+      await supabase
+        .from('registrations')
+        .update({ status: newStatus })
+        .eq('id', id);
+    } catch (err) {
+      console.error('Error updating status:', err);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    try {
+      const { error } = await supabase
+        .from('site_settings')
+        .update({
+          bcv_rate: bcvRate,
+          youtube_live_url: youtubeLive,
+          admin_notification_email: adminEmail,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', 'general');
+
+      if (error) throw error;
+      alert('¡Configuración guardada en Supabase exitosamente!');
+    } catch (err: any) {
+      alert(`Error al guardar: ${err.message}`);
+    } finally {
+      setSavingSettings(false);
     }
   };
 
   const handleExport = () => {
     exportRegistrationsToExcel(filtered, `Participantes_ReboteSports_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
+
+  // Filtrado de participantes
+  const filtered = registrations.filter(r => {
+    const matchesSearch = 
+      r.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.id_doc?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesStatus = statusFilter === 'todos' || r.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-3 border-orange-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs uppercase tracking-widest text-slate-400 font-bold">Verificando sesión...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-white font-sans flex flex-col">
@@ -120,28 +167,47 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        {/* Pestañas de navegación */}
-        <div className="flex items-center gap-2 text-xs font-bold">
-          <button
-            onClick={() => setActiveTab('registrations')}
-            className={`px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-all ${
-              activeTab === 'registrations' 
-                ? 'bg-orange-500 text-slate-950 shadow-md' 
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Users className="w-4 h-4" /> Participantes ({registrations.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={`px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-all ${
-              activeTab === 'settings' 
-                ? 'bg-orange-500 text-slate-950 shadow-md' 
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Settings className="w-4 h-4" /> Configuración & Pagos
-          </button>
+        {/* Pestañas de navegación y Sesión */}
+        <div className="flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-2 text-xs font-bold">
+            <button
+              onClick={() => setActiveTab('registrations')}
+              className={`px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-all ${
+                activeTab === 'registrations' 
+                  ? 'bg-orange-500 text-slate-950 shadow-md' 
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Users className="w-4 h-4" /> Participantes ({registrations.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-all ${
+                activeTab === 'settings' 
+                  ? 'bg-orange-500 text-slate-950 shadow-md' 
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Settings className="w-4 h-4" /> Configuración & Pagos
+            </button>
+          </div>
+
+          <div className="h-4 w-px bg-slate-800 hidden sm:block" />
+
+          {/* Usuario y Logout */}
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-400 font-mono hidden md:inline-block">
+              {userEmail}
+            </span>
+            <button
+              onClick={handleLogout}
+              title="Cerrar Sesión"
+              className="p-2 rounded-lg bg-slate-800 hover:bg-red-500/20 hover:text-red-400 text-slate-400 transition-all flex items-center gap-1.5 text-xs"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline font-bold">Salir</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -173,7 +239,7 @@ export default function AdminDashboardPage() {
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
                 <span className="text-xs text-orange-400 font-medium">Recaudación Estimada</span>
                 <div className="text-2xl font-black text-orange-400 mt-1">
-                  ${registrations.reduce((acc, r) => acc + (r.payment_amount_usd || 0), 0)} USD
+                  ${registrations.reduce((acc, r) => acc + (Number(r.payment_amount_usd) || 0), 0)} USD
                 </div>
               </div>
             </div>
@@ -202,12 +268,20 @@ export default function AdminDashboardPage() {
                   <option value="pendiente">Pendientes</option>
                   <option value="rechazado">Rechazados</option>
                 </select>
+
+                <button
+                  onClick={fetchData}
+                  title="Actualizar datos"
+                  className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all flex items-center gap-1.5 text-xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                </button>
               </div>
 
               {/* Botón Exportar a Excel */}
               <button
                 onClick={handleExport}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer"
               >
                 <Download className="w-4 h-4" /> Exportar a Excel ({filtered.length})
               </button>
@@ -229,75 +303,83 @@ export default function AdminDashboardPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/80">
-                    {filtered.map((item) => (
-                      <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="py-4 px-6">
-                          <span className="font-mono font-black text-orange-400 block">{item.code}</span>
-                          <span className="text-[10px] text-slate-500">
-                            {new Date(item.created_at).toLocaleDateString('es-VE')}
-                          </span>
-                        </td>
-                        <td className="py-4 px-6">
-                          <div className="font-bold text-white text-sm">{item.full_name}</div>
-                          <div className="text-[11px] text-slate-400">{item.id_doc} • {item.phone}</div>
-                        </td>
-                        <td className="py-4 px-6">
-                          <div className="font-semibold text-slate-200">{item.event_name}</div>
-                          <div className="text-[10px] text-orange-400">{item.modality || 'General'}</div>
-                        </td>
-                        <td className="py-4 px-6">
-                          <div className="font-bold text-white">${item.payment_amount_usd} USD</div>
-                          <div className="text-[10px] text-slate-400 uppercase">
-                            {item.payment_method} {item.payment_reference ? `(Ref: ${item.payment_reference})` : ''}
-                          </div>
-                        </td>
-                        <td className="py-4 px-6">
-                          <span className="font-bold px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-300">
-                            {item.shirt_size || 'N/A'}
-                          </span>
-                        </td>
-                        <td className="py-4 px-6">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                            item.status === 'aprobado'
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                              : item.status === 'rechazado'
-                              ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                              : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                          }`}>
-                            {item.status}
-                          </span>
-                        </td>
-                        <td className="py-4 px-6 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {item.status !== 'aprobado' && (
-                              <button
-                                onClick={() => handleUpdateStatus(item.id, 'aprobado')}
-                                title="Aprobar Pago"
-                                className="p-1.5 rounded-lg bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white transition-all"
-                              >
-                                <CheckCircle className="w-4 h-4" />
-                              </button>
-                            )}
-                            {item.status !== 'rechazado' && (
-                              <button
-                                onClick={() => handleUpdateStatus(item.id, 'rechazado')}
-                                title="Rechazar Pago"
-                                className="p-1.5 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white transition-all"
-                              >
-                                <XCircle className="w-4 h-4" />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => setSelectedReg(item)}
-                              title="Ver Ficha Completa"
-                              className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition-all"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-                          </div>
+                    {filtered.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-slate-500 text-xs">
+                          {loading ? 'Cargando participantes...' : 'No se encontraron inscripciones con ese criterio.'}
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      filtered.map((item) => (
+                        <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="py-4 px-6">
+                            <span className="font-mono font-black text-orange-400 block">{item.code}</span>
+                            <span className="text-[10px] text-slate-500">
+                              {new Date(item.created_at).toLocaleDateString('es-VE')}
+                            </span>
+                          </td>
+                          <td className="py-4 px-6">
+                            <div className="font-bold text-white text-sm">{item.full_name}</div>
+                            <div className="text-[11px] text-slate-400">{item.id_doc} • {item.phone}</div>
+                          </td>
+                          <td className="py-4 px-6">
+                            <div className="font-semibold text-slate-200">{item.event_name}</div>
+                            <div className="text-[10px] text-orange-400">{item.modality || 'General'}</div>
+                          </td>
+                          <td className="py-4 px-6">
+                            <div className="font-bold text-white">${item.payment_amount_usd} USD</div>
+                            <div className="text-[10px] text-slate-400 uppercase">
+                              {item.payment_method} {item.payment_reference ? `(Ref: ${item.payment_reference})` : ''}
+                            </div>
+                          </td>
+                          <td className="py-4 px-6">
+                            <span className="font-bold px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-300">
+                              {item.shirt_size || 'N/A'}
+                            </span>
+                          </td>
+                          <td className="py-4 px-6">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                              item.status === 'aprobado'
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                : item.status === 'rechazado'
+                                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                            }`}>
+                              {item.status}
+                            </span>
+                          </td>
+                          <td className="py-4 px-6 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {item.status !== 'aprobado' && (
+                                <button
+                                  onClick={() => handleUpdateStatus(item.id, 'aprobado')}
+                                  title="Aprobar Pago"
+                                  className="p-1.5 rounded-lg bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white transition-all cursor-pointer"
+                                >
+                                  <CheckCircle className="w-4 h-4" />
+                                </button>
+                              )}
+                              {item.status !== 'rechazado' && (
+                                <button
+                                  onClick={() => handleUpdateStatus(item.id, 'rechazado')}
+                                  title="Rechazar Pago"
+                                  className="p-1.5 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white transition-all cursor-pointer"
+                                >
+                                  <XCircle className="w-4 h-4" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setSelectedReg(item)}
+                                title="Ver Ficha Completa"
+                                className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition-all cursor-pointer"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -363,10 +445,11 @@ export default function AdminDashboardPage() {
               <div className="pt-4">
                 <button
                   type="button"
-                  onClick={() => alert('¡Configuración guardada exitosamente!')}
-                  className="w-full py-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-slate-950 font-black text-sm uppercase tracking-wider transition-all"
+                  disabled={savingSettings}
+                  onClick={handleSaveSettings}
+                  className="w-full py-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-slate-950 font-black text-sm uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer"
                 >
-                  Guardar Cambios
+                  {savingSettings ? 'Guardando en Supabase...' : 'Guardar Cambios'}
                 </button>
               </div>
             </div>
@@ -401,13 +484,13 @@ export default function AdminDashboardPage() {
             <div className="flex gap-2 mt-6 pt-4 border-t border-slate-800">
               <button
                 onClick={() => handleUpdateStatus(selectedReg.id, 'aprobado')}
-                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs"
+                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-xs cursor-pointer"
               >
                 Aprobar Inscripción
               </button>
               <button
                 onClick={() => handleUpdateStatus(selectedReg.id, 'rechazado')}
-                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 font-bold text-xs"
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 font-bold text-xs cursor-pointer"
               >
                 Rechazar
               </button>
