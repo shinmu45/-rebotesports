@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { 
   Users, Calendar, Download, Search, CheckCircle, XCircle, 
   Clock, Shield, DollarSign, Settings, Plus, RefreshCw, ArrowLeft, Eye, LogOut,
-  Trash2, Edit, Check, AlertCircle, Tag, MapPin
+  Trash2, Edit, Check, AlertCircle, Tag, MapPin, UploadCloud
 } from 'lucide-react';
 import { Registration, EventItem, SiteSettings } from '@/types';
 import { exportRegistrationsToExcel } from '@/lib/excelExport';
@@ -43,6 +43,9 @@ export default function AdminDashboardPage() {
   const [eventVenue, setEventVenue] = useState('Polideportivo de Las Delicias');
   const [eventPriceUsd, setEventPriceUsd] = useState<number | ''>(15);
   const [eventBannerUrl, setEventBannerUrl] = useState('/img/running-promo.jpeg');
+  const [eventBannerFile, setEventBannerFile] = useState<File | null>(null);
+  const [eventBannerPreview, setEventBannerPreview] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [eventDescription, setEventDescription] = useState('');
   const [eventRequiresKit, setEventRequiresKit] = useState(true);
   const [eventIsFeatured, setEventIsFeatured] = useState(false);
@@ -141,42 +144,38 @@ export default function AdminDashboardPage() {
         throw new Error('Por favor completa todos los campos obligatorios del evento.');
       }
 
-      // Generar slug limpio
-      const generatedSlug = eventTitle
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '') + `-${Date.now().toString().slice(-4)}`;
+      const formData = new FormData();
+      formData.append('title', eventTitle.trim());
+      formData.append('subtitle', eventSubtitle.trim());
+      formData.append('category', eventCategory);
+      formData.append('event_date', eventDate.trim());
+      formData.append('event_time', eventTime.trim());
+      formData.append('location', eventLocation.trim());
+      formData.append('venue', eventVenue.trim());
+      formData.append('price_usd', String(Number(eventPriceUsd) || 0));
+      formData.append('description', eventDescription.trim());
+      formData.append('banner_url', eventBannerUrl.trim());
+      formData.append('requires_kit', String(eventRequiresKit));
+      formData.append('is_combo', String(eventIsCombo));
+      formData.append('is_featured', String(eventIsFeatured));
 
-      const newEventData = {
-        slug: generatedSlug,
-        title: eventTitle.trim(),
-        subtitle: eventSubtitle.trim() || null,
-        description: eventDescription.trim() || 'Evento deportivo oficial.',
-        category: eventCategory,
-        event_date: eventDate.trim(),
-        event_time: eventTime.trim() || 'Por definir',
-        location: eventLocation.trim(),
-        venue: eventVenue.trim(),
-        price_usd: Number(eventPriceUsd) || 0,
-        banner_url: eventBannerUrl.trim() || '/img/running-promo.jpeg',
-        is_featured: eventIsFeatured,
-        is_combo: eventIsCombo,
-        status: 'activo',
-        requires_kit: eventRequiresKit
-      };
+      if (eventBannerFile) {
+        formData.append('file', eventBannerFile);
+      }
 
-      const { data, error } = await supabase
-        .from('events')
-        .insert([newEventData])
-        .select()
-        .single();
+      const res = await fetch('/api/events', {
+        method: 'POST',
+        body: formData
+      });
 
-      if (error) throw error;
+      const result = await res.json();
 
-      if (data) {
-        setEvents(prev => [data, ...prev]);
+      if (!res.ok) {
+        throw new Error(result.error || 'Error al guardar el evento en el servidor.');
+      }
+
+      if (result.event) {
+        setEvents(prev => [result.event, ...prev]);
         setShowEventModal(false);
         // Reset form
         setEventTitle('');
@@ -184,12 +183,15 @@ export default function AdminDashboardPage() {
         setEventDescription('');
         setEventDate('');
         setEventTime('');
+        setEventBannerFile(null);
+        setEventBannerPreview(null);
         alert('¡Evento creado exitosamente y publicado en la base de datos!');
       }
     } catch (err: any) {
       setEventError(err.message || 'Error al crear el evento');
     } finally {
       setSavingEvent(false);
+      setUploadingImage(false);
     }
   };
 
@@ -787,15 +789,73 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
+              {/* Subida de Imagen / Flyer por el Cliente */}
               <div>
-                <label className="text-slate-300 font-bold block mb-1">Imagen de Portada (URL o /img/...)</label>
-                <input
-                  type="text"
-                  value={eventBannerUrl}
-                  onChange={(e) => setEventBannerUrl(e.target.value)}
-                  placeholder="/img/running-promo.jpeg o enlace https://..."
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-orange-500 rounded-xl px-4 py-2.5 text-white outline-none font-mono"
-                />
+                <label className="text-slate-300 font-bold block mb-1.5 flex items-center justify-between">
+                  <span>Flyer / Imagen del Evento *</span>
+                  <span className="text-[10px] text-orange-400 font-normal">Sube cualquier imagen JPG, PNG o WebP</span>
+                </label>
+
+                {/* Zona de Arrastrar o Seleccionar Archivo */}
+                <div className="relative border-2 border-dashed border-slate-700 hover:border-orange-500 rounded-2xl p-4 transition-all bg-slate-950/60 text-center">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setEventBannerFile(file);
+                        const previewUrl = URL.createObjectURL(file);
+                        setEventBannerPreview(previewUrl);
+                      }
+                    }}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  />
+
+                  {eventBannerPreview ? (
+                    <div className="flex flex-col items-center">
+                      <div className="relative h-40 w-full rounded-xl overflow-hidden mb-2 border border-slate-700">
+                        <img
+                          src={eventBannerPreview}
+                          alt="Vista previa del flyer"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <span className="text-[11px] text-emerald-400 font-bold">
+                        ✓ Imagen seleccionada: {eventBannerFile?.name} (Haz clic para cambiar)
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="py-4 flex flex-col items-center justify-center gap-2">
+                      <div className="p-3 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                        <UploadCloud className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold text-white block">
+                          Haz clic para seleccionar o arrastra el flyer de tu evento aquí
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          Soporta imágenes de alta resolución desde tu PC o teléfono
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Opción alternativa opcional: Enlace URL */}
+                <div className="mt-2 text-[11px] flex items-center gap-2 text-slate-400">
+                  <span>O usa una URL:</span>
+                  <input
+                    type="text"
+                    value={eventBannerUrl}
+                    onChange={(e) => {
+                      setEventBannerUrl(e.target.value);
+                      if (!eventBannerFile) setEventBannerPreview(e.target.value);
+                    }}
+                    placeholder="/img/running-promo.jpeg o https://..."
+                    className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-300 text-[10px] outline-none font-mono focus:border-slate-600"
+                  />
+                </div>
               </div>
 
               <div>
