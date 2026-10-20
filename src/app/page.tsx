@@ -92,13 +92,39 @@ const defaultSettings: SiteSettings = {
   pagomovil_id: 'J-29476798-2',
   zelle_email: 'pagos@produccionesberaca.com',
   zelle_holder: 'Producciones Beraca',
-  youtube_live_url: 'https://www.youtube.com/embed/live_stream?channel=UCexample',
-  youtube_channel_name: 'Rebote Sports Oficial',
+  youtube_live_url: 'https://www.youtube.com/embed/0zMK_498_OM',
+  youtube_channel_name: 'Rebote Sports',
   admin_notification_email: 'notificaciones@rebotesports.com',
   support_whatsapp: '584144780475'
 };
 
-export default function HomePage() {
+import { supabase } from '@/lib/supabase';
+
+// Obtener eventos y configuración en tiempo real desde Supabase
+export const dynamic = 'force-dynamic';
+
+async function getHomePageData() {
+  try {
+    const [eventsRes, settingsRes] = await Promise.all([
+      supabase.from('events').select('*').order('created_at', { ascending: false }),
+      supabase.from('site_settings').select('*').eq('id', 'general').single()
+    ]);
+
+    const events: EventItem[] = (eventsRes.data && eventsRes.data.length > 0) 
+      ? eventsRes.data 
+      : initialEvents;
+
+    const settings: SiteSettings = settingsRes.data || defaultSettings;
+
+    return { events, settings };
+  } catch (err) {
+    console.warn('Error fetching homepage data from Supabase, using defaults:', err);
+    return { events: initialEvents, settings: defaultSettings };
+  }
+}
+
+export default async function HomePage() {
+  const { events, settings } = await getHomePageData();
   return (
     <div className="min-h-screen bg-slate-950 text-white selection:bg-orange-500 selection:text-slate-950 font-sans">
       <Navbar />
@@ -197,7 +223,7 @@ export default function HomePage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {initialEvents.map((event) => (
+            {events.map((event) => (
               <div 
                 key={event.id}
                 className={`bg-slate-900 rounded-3xl overflow-hidden border transition-all duration-300 flex flex-col justify-between group hover:-translate-y-1.5 ${
@@ -413,16 +439,16 @@ export default function HomePage() {
 
       {/* SECCIÓN 4: YOUTUBE EN VIVO */}
       <YoutubeLive 
-        liveUrl={defaultSettings.youtube_live_url}
-        channelName={defaultSettings.youtube_channel_name}
+        liveUrl={settings.youtube_live_url}
+        channelName={settings.youtube_channel_name}
       />
 
       {/* SECCIÓN 5: FORMULARIO DE REGISTRO EN LÍNEA */}
       <section className="py-20 bg-slate-950 relative border-t border-slate-800">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <RegistrationForm 
-            events={initialEvents} 
-            settings={defaultSettings} 
+            events={events} 
+            settings={settings} 
           />
         </div>
       </section>
@@ -430,19 +456,16 @@ export default function HomePage() {
       {/* FOOTER */}
       <footer className="bg-slate-950 border-t border-slate-800 py-12 text-slate-500 text-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-3">
-            <div className="relative w-10 h-10 rounded-full overflow-hidden border border-slate-700">
+          <div className="flex items-center gap-4">
+            <div className="relative h-12 w-44">
               <Image 
-                src="/img/rebote-sports-brand.jpeg" 
+                src="/img/logo.png" 
                 alt="Rebote Sports" 
                 fill 
-                className="object-cover" 
+                className="object-contain object-left" 
               />
             </div>
-            <div>
-              <div className="font-bold text-white uppercase tracking-wider text-sm">Rebote Sports</div>
-              <p className="text-[11px] text-slate-400">En alianza con Producciones Beraca • RIF: J-29476798-2</p>
-            </div>
+            <p className="text-[11px] text-slate-400">En alianza con Producciones Beraca • RIF: J-29476798-2</p>
           </div>
 
           <div className="text-center md:text-right">
